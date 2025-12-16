@@ -82,8 +82,9 @@ void handleNewMessages(int numNewMessages) {
   for (int i=0; i<numNewMessages; i++) {
     // Chat id of the requester
     String chat_id = String(bot.messages[i].chat_id);
-    Serial.println("CHAT_ID");
+    Serial.print("CHAT_ID: ");
     Serial.println(chat_id);
+
     if (chat_id != CHAT_ID){
       bot.sendMessage(chat_id, "Unauthorized user", "");
       continue;
