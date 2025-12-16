@@ -21,7 +21,6 @@
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
 #include "time.h"
-#include <regex>
 
 #ifdef ESP8266
   X509List cert(TELEGRAM_CERTIFICATE_ROOT);
@@ -50,17 +49,19 @@ const int   daylightOffset_sec = 0;
 
 //int intervals = (AIR_VALUE - WATER_VALUE)/3;
 
-#define RELAY_PIN 32  // Arduino pin that connects to relay
+#define RELAY_PIN_LAMP 25  // Arduino pin that connects to relay lamp
+
+#define RELAY_PIN_PUMP 32  // Arduino pin that connects to relay pump
 
 unsigned long myTime1;
 unsigned long myTime2;
 
-enum State{no_action, water_pump_on};
-State actualState = no_action;
+enum State{NOACTION, WATERPUMPON, DAYLIGHTLAMPON};
+State actualState = NOACTION;
 
 // function to check if string is valid number
 boolean isValidNumber(String str) {
-  if(str.charAt(1) == '0'){
+  if(str.charAt(1) == '0'){  
     return false;
   }
     
@@ -114,12 +115,20 @@ void handleNewMessages(int numNewMessages) {
       delay(500);
     }
 
+    if (text == "/daylight_lamp_on") {
+
+      bot.sendMessage(chat_id, "please enter daylight lamp operation time in ms: ", "");
+      delay(500);
+
+      actualState = DAYLIGHTLAMPON;
+    }
+
     if (text == "/water_pump_on") {
 
       bot.sendMessage(chat_id, "please enter pump operation time in ms: ", "");
       delay(500);
 
-      actualState = water_pump_on;
+      actualState = WATERPUMPON;
 
     }
 
@@ -127,7 +136,7 @@ void handleNewMessages(int numNewMessages) {
 
       int duration = text.substring(1).toInt();
 
-      if (actualState == water_pump_on){
+      if (actualState == WATERPUMPON){
 
         int waterLevel = analogRead(CMS_PIN);
         waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
@@ -136,10 +145,10 @@ void handleNewMessages(int numNewMessages) {
         bot.sendMessage(chat_id, "water pump ON", "");
         delay(500);
         myTime1 = millis();
-        digitalWrite(RELAY_PIN, LOW);
+        digitalWrite(RELAY_PIN_PUMP, LOW);
         Serial.println("water pump ON");
         delay(duration);
-        digitalWrite(RELAY_PIN, HIGH);
+        digitalWrite(RELAY_PIN_PUMP, HIGH);
         Serial.println("water pump OFF");
         myTime2 = millis();
         bot.sendMessage(chat_id, "water pump OFF", "");
@@ -155,8 +164,33 @@ void handleNewMessages(int numNewMessages) {
         bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
         delay(500);
 
-        actualState = no_action;
+        actualState = NOACTION;
 
+      }
+
+      else if (actualState == DAYLIGHTLAMPON){
+
+        bot.sendMessage(chat_id, "daylight lamp is ON", "");
+        delay(500);
+        myTime1 = millis();
+        digitalWrite(RELAY_PIN_LAMP, LOW);
+        Serial.println("daylight lamp ON");
+        delay(duration);
+        digitalWrite(RELAY_PIN_LAMP, HIGH);
+        Serial.println("daylight lamp OFF");
+        myTime2 = millis();
+        bot.sendMessage(chat_id, "daylight lamp OFF", "");
+        delay(500);
+        Serial.print("daylight lamp operated for ");
+        Serial.print((myTime2-myTime1));
+        Serial.println("ms");
+        bot.sendMessage(chat_id, "daylight lamp operated for " + String(myTime2-myTime1) + "ms", "");
+
+        actualState = NOACTION;
+      }
+      
+      else {
+        actualState = NOACTION;
       }
 
     }
@@ -167,6 +201,7 @@ void handleNewMessages(int numNewMessages) {
       html_msg += "I'm dog bot and I will help you with this garden.\n\n";
       html_msg += "<a href='/water_status'>/water_status</a> -> <em>returns water tank state in percentage</em>\n";
       html_msg += "<a href='/water_pump_on'>/water_pump_on</a> -> <em>set water pump ON</em>\n";
+      html_msg += "<a href='/daylight_lamp_on'>/daylight_lamp_on</a> -> <em>set daylight lamp ON</em>\n";
 
       bot.sendMessage(chat_id, html_msg, "HTML");
       delay(500);
@@ -246,10 +281,14 @@ void setup() {
   //analogSetWidth(12);                         // Sets the sample bits and read resolution, default is 12-bit (0 - 4095), range is 9 - 12 bits
   //delay(100);
 
-  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(RELAY_PIN_PUMP, OUTPUT);
   delay(100);
-  digitalWrite(RELAY_PIN, HIGH);
-  delay(10000);
+  digitalWrite(RELAY_PIN_PUMP, HIGH);
+  delay(3000);
+  pinMode(RELAY_PIN_LAMP, OUTPUT);
+  delay(100);
+  digitalWrite(RELAY_PIN_LAMP, HIGH);
+  delay(3000);
   Serial.println("system READY...");
   Serial.println("");
 }

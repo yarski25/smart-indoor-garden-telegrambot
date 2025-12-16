@@ -1,0 +1,23 @@
+# PlatformIO
+.pio/
+build/
+debug/
+
+# IDE-related
+.vscode/
+*.code-workspace
+.idea/
+
+# Compiled files
+*.bin
+*.elf
+*.hex
+
+# Dependency files
+*.d
+
+# Ignore platformio-specific config files that can be machine-specific
+platformio.ini
+
+# Secrets or keys files (if any)
+xxx.cpp
