@@ -19,7 +19,6 @@
 #endif
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
-#include <ArduinoJson.h>
 #include "time.h"
 
 #ifdef ESP8266
@@ -83,6 +82,8 @@ void handleNewMessages(int numNewMessages) {
   for (int i=0; i<numNewMessages; i++) {
     // Chat id of the requester
     String chat_id = String(bot.messages[i].chat_id);
+    Serial.println("CHAT_ID");
+    Serial.println(chat_id);
     if (chat_id != CHAT_ID){
       bot.sendMessage(chat_id, "Unauthorized user", "");
       continue;
@@ -209,6 +210,15 @@ void handleNewMessages(int numNewMessages) {
   }
 }
 
+void isBotAlive(){
+  // Verify the bot info
+  if (bot.getMe()) {
+    Serial.println("Bot is working!");
+  } else {
+    Serial.println("Error: Bot is not responding!");
+  }
+}
+
 void setTimezone(String timezone){
   //Serial.printf("  Setting Timezone to %s\n",timezone.c_str());
   setenv("TZ",timezone.c_str(),1);  //  Now adjust the TZ.  Clock settings are adjusted to show the new local time
@@ -306,67 +316,4 @@ void loop() {
     lastTimeBotRan = millis();
   }
 
-  // int waterLevel = analogRead(WLS_PIN);
-  // delay(1000);
-  // waterLevel = map(waterLevel, WLS_LOW, WLS_HIGH, 0, 100);
-
-  // if(waterLevel > 90){
-  //   Serial.print("water level HIGH (");
-  //   Serial.print(waterLevel);
-  //   Serial.println("%)");
-  //   myTime1 = millis();
-  //   digitalWrite(RELAY_PIN, LOW);
-  //   Serial.println("water pump ON");
-  //   delay(1000);
-  //   digitalWrite(RELAY_PIN, HIGH);
-  //   Serial.println("water pump OFF");
-  //   myTime2 = millis();
-  //   Serial.print("water pump operated for ");
-  //   Serial.print((myTime2-myTime1));
-  //   Serial.println("ms");
-  //   delay(60000);
-  // }
-  // else{
-  //   Serial.print("water level LOW (");
-  //   Serial.print(waterLevel);
-  //   Serial.println("%)");
-  //   digitalWrite(RELAY_PIN, HIGH);
-  //   Serial.println("water pump OFF");
-  // }
-
-  
-
-//  int value = analogRead(AOUT_PIN); // read the analog value from sensor
-//
-//  if(value > WATER_VALUE && value < (WATER_VALUE + intervals))
-//  {
-//    Serial.print("The soil is VERY WET => turn pump OFF (");
-//    digitalWrite(RELAY_PIN, LOW);
-//  }
-//  else if(value > (WATER_VALUE + intervals) && value < (AIR_VALUE - intervals))
-//  {
-//    Serial.print("The soil is WET => turn pump OFF (");
-//    digitalWrite(RELAY_PIN, LOW);
-//  }
-//  else if(value < AIR_VALUE && value > (AIR_VALUE - intervals))
-//  {
-//    Serial.print("The soil is DRY (");
-//    Serial.print(value);
-//    Serial.println(")");
-//    digitalWrite(RELAY_PIN, HIGH);
-//    Serial.println("pump turn ON");
-//    delay(200);
-//    digitalWrite(RELAY_PIN, LOW);
-//    Serial.println("pump turn OFF");
-//    delay(30000);
-//  }
-//  else
-//  {
-//    Serial.print("Out of range => turn pump OFF (");
-//    digitalWrite(RELAY_PIN, LOW);
-//  }
-//
-//  Serial.print(value);
-//  Serial.println(")");
-//  delay(500);
 }
