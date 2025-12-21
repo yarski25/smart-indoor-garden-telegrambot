@@ -9,6 +9,8 @@
 // grow lamp
 // 2-channel relay to control water pump and grow lamp
 // external power supply
+// #define configUSE_TRACE_FACILITY 1
+// #define configUSE_STATS_FORMATTING_FUNCTIONS 1
 
 #include <Arduino.h>
 #include <xxx.h>
@@ -20,6 +22,7 @@
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 #include "time.h"
+#include "esp_wifi.h"
 
 #ifdef ESP8266
   X509List cert(TELEGRAM_CERTIFICATE_ROOT);
@@ -27,14 +30,15 @@
 
 WiFiClientSecure client;
 UniversalTelegramBot bot(botToken, client);
+String chat_id;
 
 // Checks for new messages every 1 second.
-int botRequestDelay = 1000;
-unsigned long lastTimeBotRan;
+// int botRequestDelay = 1000;
+// unsigned long lastTimeBotRan;
 
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;
-const int   daylightOffset_sec = 0;
+// const char* ntpServer = "pool.ntp.org";
+// const long  gmtOffset_sec = 0;
+// const int   daylightOffset_sec = 0;
 
 // HW configs
 #define CMS_PIN 33 // Arduino pin that connects to analog pin of capacity moisture sensor (CMS)
@@ -52,13 +56,39 @@ const int   daylightOffset_sec = 0;
 
 #define RELAY_PIN_PUMP 32  // Arduino pin that connects to relay pump
 
-unsigned long myTime1;
-unsigned long myTime2;
+// unsigned long myTime1;
+// unsigned long myTime2;
+
+bool dayLightActive = false;
+bool waterPumpActive = false;
+
+unsigned long dayLightOffTime = 0;
+unsigned long dayLightOnTime = 0;
+unsigned long waterPumpOffTime = 0;
+unsigned long waterPumpOnTime = 0;
 
 enum State{NOACTION, WATERPUMPON, DAYLIGHTLAMPON};
 State actualState = NOACTION;
 
-// function to check if string is valid number
+SemaphoreHandle_t botMutex;
+
+/**
+ * prints free stack for task
+ * @param taskName
+ */
+void printFreeStack(const char *taskName)
+{
+  UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
+  Serial.print(taskName);
+  Serial.print(" free stack words = ");
+  Serial.println(freeStack);   // each word = 4 bytes
+}
+
+/**
+ * Checks if string is valid number
+ * @param str String
+ * @return boolean
+ */
 boolean isValidNumber(String str) {
   if(str.charAt(1) == '0'){  
     return false;
@@ -73,144 +103,9 @@ boolean isValidNumber(String str) {
   return true;
 }
 
-
-// Handle what happens when you receive new messages
-void handleNewMessages(int numNewMessages) {
-  Serial.println("handleNewMessages");
-  Serial.println(String(numNewMessages));
-
-  for (int i=0; i<numNewMessages; i++) {
-    // Chat id of the requester
-    String chat_id = String(bot.messages[i].chat_id);
-    Serial.print("CHAT_ID: ");
-    Serial.println(chat_id);
-
-    if (chat_id != CHAT_ID){
-      bot.sendMessage(chat_id, "Unauthorized user", "");
-      continue;
-    }
-    
-    // Print the received message
-    String text = bot.messages[i].text;
-    Serial.println(text);
-
-    String from_name = bot.messages[i].from_name;
-    
-    if (text == "/water_status") {
-
-      int waterLevel = analogRead(CMS_PIN);
-      //bot.sendMessage(chat_id, "water level value is " + String(waterLevel), "");
-      waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-      bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-      delay(500);
-      if (waterLevel > 80){
-        bot.sendMessage(chat_id, "water level is HIGH, system OK", "");
-      }
-      else if( (waterLevel <= 80) && (waterLevel> 50) ){
-        bot.sendMessage(chat_id, "water level is MEDIUM, please refill water tank", "");
-      }
-      else{
-        bot.sendMessage(chat_id, "water level is too LOW, please refill water tank", "");
-        delay(500);
-        bot.sendMessage(chat_id, "irrigation system operation is limited", "");
-      }
-      delay(500);
-    }
-
-    if (text == "/daylight_lamp_on") {
-
-      bot.sendMessage(chat_id, "please enter daylight lamp operation time in ms: ", "");
-      delay(500);
-
-      actualState = DAYLIGHTLAMPON;
-    }
-
-    if (text == "/water_pump_on") {
-
-      bot.sendMessage(chat_id, "please enter pump operation time in ms: ", "");
-      delay(500);
-
-      actualState = WATERPUMPON;
-
-    }
-
-    if (isValidNumber(text)) {
-
-      int duration = text.substring(1).toInt();
-
-      if (actualState == WATERPUMPON){
-
-        int waterLevel = analogRead(CMS_PIN);
-        waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-        bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-        delay(500);
-        bot.sendMessage(chat_id, "water pump ON", "");
-        delay(500);
-        myTime1 = millis();
-        digitalWrite(RELAY_PIN_PUMP, LOW);
-        Serial.println("water pump ON");
-        delay(duration);
-        digitalWrite(RELAY_PIN_PUMP, HIGH);
-        Serial.println("water pump OFF");
-        myTime2 = millis();
-        bot.sendMessage(chat_id, "water pump OFF", "");
-        delay(500);
-        Serial.print("water pump operated for ");
-        Serial.print((myTime2-myTime1));
-        Serial.println("ms");
-        bot.sendMessage(chat_id, "water pump operated for " + String(myTime2-myTime1) + "ms", "");
-        delay(60000);
-        
-        waterLevel = analogRead(CMS_PIN);
-        waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-        bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-        delay(500);
-
-        actualState = NOACTION;
-
-      }
-
-      else if (actualState == DAYLIGHTLAMPON){
-
-        bot.sendMessage(chat_id, "daylight lamp is ON", "");
-        delay(500);
-        myTime1 = millis();
-        digitalWrite(RELAY_PIN_LAMP, LOW);
-        Serial.println("daylight lamp ON");
-        delay(duration);
-        digitalWrite(RELAY_PIN_LAMP, HIGH);
-        Serial.println("daylight lamp OFF");
-        myTime2 = millis();
-        bot.sendMessage(chat_id, "daylight lamp OFF", "");
-        delay(500);
-        Serial.print("daylight lamp operated for ");
-        Serial.print((myTime2-myTime1));
-        Serial.println("ms");
-        bot.sendMessage(chat_id, "daylight lamp operated for " + String(myTime2-myTime1) + "ms", "");
-
-        actualState = NOACTION;
-      }
-      
-      else {
-        actualState = NOACTION;
-      }
-
-    }
-
-    if (text == "/start")
-    {
-      String html_msg = "Welcome to <strong>Smart Indoor Garden</strong>, " + from_name + ".\n";
-      html_msg += "I'm dog bot and I will help you with this garden.\n\n";
-      html_msg += "<a href='/water_status'>/water_status</a> -> <em>returns water tank state in percentage</em>\n";
-      html_msg += "<a href='/water_pump_on'>/water_pump_on</a> -> <em>set water pump ON</em>\n";
-      html_msg += "<a href='/daylight_lamp_on'>/daylight_lamp_on</a> -> <em>set daylight lamp ON</em>\n";
-
-      bot.sendMessage(chat_id, html_msg, "HTML");
-      delay(500);
-    }
-  }
-}
-
+/**
+ * Checks bot availability
+ */
 void isBotAlive(){
   // Verify the bot info
   if (bot.getMe()) {
@@ -220,39 +115,285 @@ void isBotAlive(){
   }
 }
 
-void setTimezone(String timezone){
-  //Serial.printf("  Setting Timezone to %s\n",timezone.c_str());
-  setenv("TZ",timezone.c_str(),1);  //  Now adjust the TZ.  Clock settings are adjusted to show the new local time
-  tzset();
-}
-
-void initTime(String timezone){
-  struct tm timeinfo;
-
-  //get time via NTP
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("failed to obtain time");
-    return;
-  }
-  // Now we can set the real timezone
-  setTimezone(timezone);
-}
-
-void printLocalTime()
+/**
+ * Checks water level sensor
+ */
+void checkWaterLevel()
 {
-  struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("failed to obtain time");
-    return;
+  printFreeStack("CheckWaterLevel");
+  int waterLevel = analogRead(CMS_PIN);
+  waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
+  xSemaphoreTake(botMutex, portMAX_DELAY);
+  bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
+  xSemaphoreGive(botMutex);
+  if (waterLevel > 80){
+    xSemaphoreTake(botMutex, portMAX_DELAY);
+    bot.sendMessage(chat_id, "water level is HIGH, system OK", "");
+    xSemaphoreGive(botMutex);
   }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S zone %Z %z ");
+  else if( (waterLevel <= 80) && (waterLevel> 50) ){
+    xSemaphoreTake(botMutex, portMAX_DELAY);
+    bot.sendMessage(chat_id, "water level is MEDIUM, please refill water tank", "");
+    xSemaphoreGive(botMutex);
+  }
+  else{
+    xSemaphoreTake(botMutex, portMAX_DELAY);
+    bot.sendMessage(chat_id, "water level is too LOW, please refill water tank", "");
+    xSemaphoreGive(botMutex);
+    xSemaphoreTake(botMutex, portMAX_DELAY);
+    bot.sendMessage(chat_id, "irrigation system operation is limited", "");
+    xSemaphoreGive(botMutex);
+  }
 }
 
+/**
+ * Sets WiFi modem to power save mode
+ */
+void enableWiFiPowerSave() {
+  // Minimum power-saving mode
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  Serial.println("WiFi set to modem sleep (idle) mode");
+}
+
+/**
+ * Handles WiFi connection
+ * @param pvParameters
+ */
+void WiFiTask(void *pvParameters) {
+  Serial.println("WiFiTask()");
+  while (true) {
+    // printFreeStack("WiFiTask");
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi disconnected, reconnecting...");
+      WiFi.begin(ssid, password);
+
+      uint8_t tries = 0;
+      while (WiFi.status() != WL_CONNECTED && tries < 20) {
+        vTaskDelay(500 / portTICK_PERIOD_MS); // each 0.5 s
+        tries++;
+      }
+
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("WiFi connected");
+        enableWiFiPowerSave(); // set modem sleep
+      }
+    }
+
+    // Internet test (HTTPS)
+    // if (client.connect("www.google.com", 443)) {
+    //   Serial.println("Internet OK");
+    //   client.stop();
+    // } else {
+    //   Serial.println("Internet connection LOST");
+    // }
+
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+ * Handles time synchronization
+ * @param pvParameters
+ */
+void TimeTask(void *pvParameters) {
+  Serial.println("TimeTask()");
+  configTime(0, 0, "pool.ntp.org");
+
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    // printFreeStack("TimeTask");
+    Serial.println("Waiting for time...");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+  }
+
+  Serial.println("Time synchronized");
+  vTaskDelete(NULL);
+}
+
+/**
+ * Handles day lamp task
+ * @param pvParameters
+ */
+void DayLightTask(void *pvParameters) {
+  Serial.println("DayLightTask()");
+  while (true) {
+    // printFreeStack("DayLightTask");
+    if (dayLightActive && (long)(millis() - dayLightOffTime) >= 0){
+      digitalWrite(RELAY_PIN_LAMP, LOW);
+      dayLightActive = false;
+      Serial.println("Daylight lamp OFF (timer expired)");
+      Serial.print("Daylight lamp operated for ");
+      Serial.print((dayLightOffTime-dayLightOnTime));
+      Serial.println("ms");
+      xSemaphoreTake(botMutex, portMAX_DELAY);
+      bot.sendMessage(chat_id, "daylight lamp operated for " + String(dayLightOffTime-dayLightOnTime) + "ms", "");
+      xSemaphoreGive(botMutex);
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+ * Handles water pump task
+ * @param pvParameters
+ */
+void WaterPumpTask(void *pvParameters){
+  Serial.println("WaterPumpTask()");
+  while (true) {
+    // printFreeStack("WaterPumpTask");
+    if (waterPumpActive && (long)(millis() - waterPumpOffTime) >= 0){
+      digitalWrite(RELAY_PIN_PUMP, LOW);
+      waterPumpActive = false;
+      Serial.println("Water pump OFF (timer expired)");
+      Serial.print("Water pump operated for ");
+      Serial.print((waterPumpOffTime-waterPumpOnTime));
+      Serial.println("ms");
+      xSemaphoreTake(botMutex, portMAX_DELAY);
+      bot.sendMessage(chat_id, "water pump operated for " + String(waterPumpOffTime-waterPumpOnTime) + "ms", "");
+      xSemaphoreGive(botMutex);
+
+      int waterLevel = analogRead(CMS_PIN);
+      waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
+      xSemaphoreTake(botMutex, portMAX_DELAY);
+      bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
+      xSemaphoreGive(botMutex);
+
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+ * Handles telegram bot messages
+ * @param pvParameters
+ */
+void TelegramTask(void *pvParameters) {
+  Serial.println("TelegramTask()");
+  while (true) {
+    // printFreeStack("TelegramTask");
+    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+
+    // Serial.println("handleNewMessages");
+    // Serial.println(String(numNewMessages));
+
+    while (numNewMessages) {
+      for (int i = 0; i < numNewMessages; i++) {
+
+        // Chat id of the requester
+        chat_id = String(bot.messages[i].chat_id);
+        // Serial.print("CHAT_ID: ");
+        // Serial.println(chat_id);
+
+        if (chat_id != CHAT_ID){
+          xSemaphoreTake(botMutex, portMAX_DELAY);
+          bot.sendMessage(chat_id, "Unauthorized user", "");
+          xSemaphoreGive(botMutex);
+          continue;
+        }
+
+        // Print the received message
+        String text = bot.messages[i].text;
+        Serial.println(text);
+
+        if (text.startsWith("/water_status")) {
+          checkWaterLevel();
+        }
+
+        if (text.startsWith("/daylight_lamp_on")) {
+          xSemaphoreTake(botMutex, portMAX_DELAY);
+          bot.sendMessage(chat_id, "please enter daylight lamp operation time in hours: ", "");
+          xSemaphoreGive(botMutex);
+          actualState = DAYLIGHTLAMPON;
+        }
+
+        if (text.startsWith("/water_pump_on")) {
+          xSemaphoreTake(botMutex, portMAX_DELAY);
+          bot.sendMessage(chat_id, "please enter pump operation time in minutes: ", "");
+          xSemaphoreGive(botMutex);
+          actualState = WATERPUMPON;
+        }
+
+        if (isValidNumber(text)) {
+
+          int duration = text.substring(1).toInt();
+
+          if (actualState == WATERPUMPON){
+
+            int waterLevel = analogRead(CMS_PIN);
+            waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
+            xSemaphoreTake(botMutex, portMAX_DELAY);
+            bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
+            xSemaphoreGive(botMutex);
+
+            digitalWrite(RELAY_PIN_PUMP, HIGH);
+            Serial.println("Water pump ON");
+            waterPumpActive = true;
+            waterPumpOffTime = millis() + (unsigned long)duration * 60000UL;
+            waterPumpOnTime = millis();
+            xSemaphoreTake(botMutex, portMAX_DELAY);
+            bot.sendMessage(chat_id, "water pump ON for " + String(duration) + " minutes", "");
+            xSemaphoreGive(botMutex);
+
+            actualState = NOACTION;
+
+          }
+
+          else if (actualState == DAYLIGHTLAMPON){
+
+            digitalWrite(RELAY_PIN_LAMP, HIGH);
+            Serial.println("Daylight lamp ON");
+            dayLightActive = true;
+            dayLightOffTime = millis() + (unsigned long)duration * 3600000UL;
+            dayLightOnTime = millis();
+            xSemaphoreTake(botMutex, portMAX_DELAY);
+            bot.sendMessage(chat_id, "daylight lamp ON for " + String(duration) + " hours", "");
+            xSemaphoreGive(botMutex);
+
+            actualState = NOACTION;
+          }
+
+          else {
+            actualState = NOACTION;
+          }
+
+        }
+
+        if (text.startsWith("/start"))
+        {
+          String from_name = bot.messages[i].from_name;
+          String html_msg = "Welcome to <strong>Smart Indoor Garden</strong>, " + from_name + ".\n";
+          html_msg += "I'm dog bot and I will help you with this garden.\n\n";
+          html_msg += "<a href='/water_status'>/water_status</a> -> <em>returns water tank state in percentage</em>\n";
+          html_msg += "<a href='/water_pump_on'>/water_pump_on</a> -> <em>set water pump ON</em>\n";
+          html_msg += "<a href='/daylight_lamp_on'>/daylight_lamp_on</a> -> <em>set daylight lamp ON</em>\n";
+          xSemaphoreTake(botMutex, portMAX_DELAY);
+          bot.sendMessage(chat_id, html_msg, "HTML");
+          xSemaphoreGive(botMutex);
+        }
+      }
+
+      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+    }
+
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+  }
+}
+
+/**
+ * init setup
+ */
 void setup() {
   Serial.begin(115200);
-  Serial.print("system init...");
+  Serial.println("system init...");
   Serial.println("");
+
+  Serial.println("starting at default frequency...");
+  // Set CPU to 80 MHz for power saving
+  setCpuFrequencyMhz(80);
+  Serial.println("CPU frequency set to 80 MHz.");
+  Serial.print("current CPU freq: ");
+  Serial.print(getCpuFrequencyMhz());
+  Serial.println(" MHz");
 
   #ifdef ESP8266
     client.setTrustAnchors(&cert); // Add root certificate for api.telegram.org
@@ -261,7 +402,6 @@ void setup() {
   // Connect to Wi-Fi
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  //WiFi.begin(SSID, PASSWORD);
   #ifdef ESP32
     client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
   #endif
@@ -277,20 +417,10 @@ void setup() {
   // Print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
 
-  // Check NTP time
-  // Serial.println("");
-  initTime(actualTZ);
-  printLocalTime();
-
   bot.sendMessage(CHAT_ID, "bot started", "");
-  delay(500);
 
   pinMode(CMS_PIN, INPUT);
   delay(100);
-  //analogReadResolution(12);                   // Sets the sample bits and read resolution, default is 12-bit (0 - 4095), range is 9 - 12 bits
-  //delay(100);
-  //analogSetWidth(12);                         // Sets the sample bits and read resolution, default is 12-bit (0 - 4095), range is 9 - 12 bits
-  //delay(100);
 
   pinMode(RELAY_PIN_PUMP, OUTPUT);
   delay(100);
@@ -302,19 +432,20 @@ void setup() {
   delay(3000);
   Serial.println("system READY...");
   Serial.println("");
+
+  botMutex = xSemaphoreCreateMutex();
+
+  xTaskCreatePinnedToCore(WiFiTask, "WiFiTask", 4096, NULL, 3, NULL, 0);
+  xTaskCreatePinnedToCore(TimeTask, "TimeTask", 4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(TelegramTask, "TelegramTask", 8192, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(DayLightTask, "DayLightTask", 2048, NULL, 1,  NULL, 1);
+  xTaskCreatePinnedToCore(WaterPumpTask, "WaterPumpTask", 8192, NULL, 2,  NULL, 1);
+
 }
 
+/**
+ * main loop
+ */
 void loop() {
-
-  if (millis() > lastTimeBotRan + botRequestDelay) {
-    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-
-    while(numNewMessages) {
-      Serial.println("response received");
-      handleNewMessages(numNewMessages);
-      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-    }
-    lastTimeBotRan = millis();
-  }
-
+  vTaskDelay(portMAX_DELAY);
 }
