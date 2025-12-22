@@ -32,14 +32,6 @@ WiFiClientSecure client;
 UniversalTelegramBot bot(botToken, client);
 String chat_id;
 
-// Checks for new messages every 1 second.
-// int botRequestDelay = 1000;
-// unsigned long lastTimeBotRan;
-
-// const char* ntpServer = "pool.ntp.org";
-// const long  gmtOffset_sec = 0;
-// const int   daylightOffset_sec = 0;
-
 // HW configs
 #define CMS_PIN 33 // Arduino pin that connects to analog pin of capacity moisture sensor (CMS)
 #define CMS_AIR 3200 // low level of CMS
@@ -53,11 +45,8 @@ String chat_id;
 //int intervals = (AIR_VALUE - WATER_VALUE)/3;
 
 #define RELAY_PIN_LAMP 25  // Arduino pin that connects to relay lamp
-
 #define RELAY_PIN_PUMP 32  // Arduino pin that connects to relay pump
 
-// unsigned long myTime1;
-// unsigned long myTime2;
 
 bool dayLightActive = false;
 bool waterPumpActive = false;
@@ -122,6 +111,7 @@ void checkWaterLevel()
 {
   printFreeStack("CheckWaterLevel");
   int waterLevel = analogRead(CMS_PIN);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
   xSemaphoreTake(botMutex, portMAX_DELAY);
   bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
@@ -152,6 +142,7 @@ void checkWaterLevel()
 void enableWiFiPowerSave() {
   // Minimum power-saving mode
   esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   Serial.println("WiFi set to modem sleep (idle) mode");
 }
 
@@ -178,14 +169,6 @@ void WiFiTask(void *pvParameters) {
         enableWiFiPowerSave(); // set modem sleep
       }
     }
-
-    // Internet test (HTTPS)
-    // if (client.connect("www.google.com", 443)) {
-    //   Serial.println("Internet OK");
-    //   client.stop();
-    // } else {
-    //   Serial.println("Internet connection LOST");
-    // }
 
     vTaskDelay(30000 / portTICK_PERIOD_MS);
   }
@@ -220,6 +203,7 @@ void DayLightTask(void *pvParameters) {
     // printFreeStack("DayLightTask");
     if (dayLightActive && (long)(millis() - dayLightOffTime) >= 0){
       digitalWrite(RELAY_PIN_LAMP, LOW);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
       dayLightActive = false;
       Serial.println("Daylight lamp OFF (timer expired)");
       Serial.print("Daylight lamp operated for ");
@@ -243,6 +227,7 @@ void WaterPumpTask(void *pvParameters){
     // printFreeStack("WaterPumpTask");
     if (waterPumpActive && (long)(millis() - waterPumpOffTime) >= 0){
       digitalWrite(RELAY_PIN_PUMP, LOW);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
       waterPumpActive = false;
       Serial.println("Water pump OFF (timer expired)");
       Serial.print("Water pump operated for ");
@@ -253,6 +238,7 @@ void WaterPumpTask(void *pvParameters){
       xSemaphoreGive(botMutex);
 
       int waterLevel = analogRead(CMS_PIN);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
       waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
       xSemaphoreTake(botMutex, portMAX_DELAY);
       bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
@@ -320,12 +306,14 @@ void TelegramTask(void *pvParameters) {
           if (actualState == WATERPUMPON){
 
             int waterLevel = analogRead(CMS_PIN);
+            vTaskDelay(200 / portTICK_PERIOD_MS);
             waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
             xSemaphoreTake(botMutex, portMAX_DELAY);
             bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
             xSemaphoreGive(botMutex);
 
             digitalWrite(RELAY_PIN_PUMP, HIGH);
+            vTaskDelay(200 / portTICK_PERIOD_MS);
             Serial.println("Water pump ON");
             waterPumpActive = true;
             waterPumpOffTime = millis() + (unsigned long)duration * 60000UL;
@@ -341,6 +329,7 @@ void TelegramTask(void *pvParameters) {
           else if (actualState == DAYLIGHTLAMPON){
 
             digitalWrite(RELAY_PIN_LAMP, HIGH);
+            vTaskDelay(200 / portTICK_PERIOD_MS);
             Serial.println("Daylight lamp ON");
             dayLightActive = true;
             dayLightOffTime = millis() + (unsigned long)duration * 3600000UL;
@@ -406,7 +395,7 @@ void setup() {
     client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
   #endif
   while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     Serial.println("connecting to WiFi..");
   }
   // print WiFi signal power
@@ -420,16 +409,16 @@ void setup() {
   bot.sendMessage(CHAT_ID, "bot started", "");
 
   pinMode(CMS_PIN, INPUT);
-  delay(100);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 
   pinMode(RELAY_PIN_PUMP, OUTPUT);
-  delay(100);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   digitalWrite(RELAY_PIN_PUMP, HIGH);
-  delay(3000);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
   pinMode(RELAY_PIN_LAMP, OUTPUT);
-  delay(100);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
   digitalWrite(RELAY_PIN_LAMP, HIGH);
-  delay(3000);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
   Serial.println("system READY...");
   Serial.println("");
 
