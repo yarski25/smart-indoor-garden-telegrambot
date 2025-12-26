@@ -69,6 +69,14 @@ typedef enum
   CMD_LAMP_ON
 } CommandType;
 
+typedef enum {
+  WAIT_NONE,
+  WAIT_LAMP_HOURS,
+  WAIT_PUMP_MIN
+} PendingState;
+
+PendingState pendingState = WAIT_NONE;
+
 typedef struct
 {
   CommandType type;
@@ -458,17 +466,46 @@ void TelegramTask(void *pvParameters) {
         if(text.startsWith("/start"))
           cmd.type = CMD_START;
 
+        else if (pendingState == WAIT_LAMP_HOURS) {
+          if (isValidNumber(text)) {
+            cmd.type = CMD_LAMP_ON;
+            cmd.value = text.substring(1).toInt();
+            // xQueueSend(commandQueue, &cmd, 0);
+          } else {
+            enqueueBotMessage("Invalid value. Please enter a number > 0");
+          }
+
+          pendingState = WAIT_NONE;
+        }
+
+        else if (pendingState == WAIT_PUMP_MIN) {
+
+          if (isValidNumber(text)) {
+            cmd.type = CMD_PUMP_ON;
+            cmd.value = text.substring(1).toInt();
+            // xQueueSend(commandQueue, &cmd, 0);
+          } else {
+            enqueueBotMessage("Invalid value. Please enter a number > 0");
+          }
+
+          pendingState = WAIT_NONE;
+        }
+
         else if (text.startsWith("/water_status"))
           cmd.type = CMD_GET_WATER_STATUS;
 
         else if (text.startsWith("/water_pump_on")) {
-          cmd.type = CMD_PUMP_ON;
-          cmd.value = 5;  // Or request value later
+          enqueueBotMessage("Please send pump time in minutes (numbers only)");
+          pendingState = WAIT_PUMP_MIN;
+          // cmd.type = CMD_PUMP_ON;
+          // cmd.value = 5;  // Or request value later
         }
 
         else if (text.startsWith("/daylight_lamp_on")) {
-          cmd.type = CMD_LAMP_ON;
-          cmd.value = 1;
+          enqueueBotMessage("Please send lamp time in hours (number only)");
+          pendingState = WAIT_LAMP_HOURS;
+          // cmd.type = CMD_LAMP_ON;
+          // cmd.value = 1;
         }
 
         if (cmd.type != CMD_NONE)
