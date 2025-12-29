@@ -80,7 +80,7 @@ PendingState pendingState = WAIT_NONE;
 typedef struct
 {
   CommandType type;
-  uint32_t value; // minutes / hours / unused
+  uint32_t value; // minutes | hours | unused
 } CommandMessage;
 
 QueueHandle_t commandQueue;
@@ -89,19 +89,7 @@ QueueHandle_t commandQueue;
 QueueHandle_t pumpQueue;
 QueueHandle_t lampQueue;
 
-// bool dayLightActive = false;
-// bool waterPumpActive = false;
-//
-// unsigned long dayLightOffTime = 0;
-// unsigned long dayLightOnTime = 0;
-// unsigned long waterPumpOffTime = 0;
-// unsigned long waterPumpOnTime = 0;
-
-// enum State{NOACTION, WATERPUMPON, DAYLIGHTLAMPON};
-// State actualState = NOACTION;
-
-// SemaphoreHandle_t botMutex;
-
+// handlers
 TaskHandle_t ControlTaskHandle = NULL;
 TaskHandle_t WiFiTaskHandle = NULL;
 TaskHandle_t TelegramTaskHandle = NULL;
@@ -109,10 +97,56 @@ TaskHandle_t TimeTaskHandle = NULL;
 TaskHandle_t DayLightTaskHandle = NULL;
 TaskHandle_t WaterPumpTaskHandle = NULL;
 
+/*********
+ * UTILS *
+ *********/
+
+/**
+ * Creates message in C friendly format
+ * @param name - message input
+ * @param out - message output (char msg[size]; needs to be defined)
+ * @param size - size to protect overflow
+ */
+void createMsg(const char* name, char* out, const size_t size)
+{
+  snprintf(out, size, "%s", name);
+}
+
+/**
+ * Checks if string is valid number
+ * @param str String
+ * @return boolean
+ */
+boolean isValidNumber(String str) {
+  if(str.charAt(1) == '0'){
+    return false;
+  }
+
+  for(byte i=1;i<str.length();i++){
+    if(!isDigit(str.charAt(i))){
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * prints free stack for task
+ * @param taskName
+ */
+void printFreeStack(const char *taskName)
+{
+  UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
+  Serial.print(taskName);
+  Serial.print(" free stack words = ");
+  Serial.println(freeStack);   // each word = 4 bytes
+}
+
 /**
  * sends telegram messages
  * @param msg
- * @param parse_mode
+ * @param parse_mode - empty (standard text), HTML
  */
 void enqueueBotMessage(String msg, String parse_mode="") {
   BotMsg m;
@@ -134,48 +168,17 @@ void initComponents()
   pinMode(RELAY_PIN_PUMP, OUTPUT);
   vTaskDelay(200 / portTICK_PERIOD_MS);
 
-  // set water pump on for 3s
+  // set water pump relay off
   digitalWrite(RELAY_PIN_PUMP, HIGH);
-  vTaskDelay(3000 / portTICK_PERIOD_MS);
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 
   // init daylight lamp
   pinMode(RELAY_PIN_LAMP, OUTPUT);
   vTaskDelay(200 / portTICK_PERIOD_MS);
 
-  // set daylight lamp for 3s
+  // set daylight lamp relay off
   digitalWrite(RELAY_PIN_LAMP, HIGH);
-  vTaskDelay(3000 / portTICK_PERIOD_MS);
-}
-
-/**
- * prints free stack for task
- * @param taskName
- */
-void printFreeStack(const char *taskName)
-{
-  UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
-  Serial.print(taskName);
-  Serial.print(" free stack words = ");
-  Serial.println(freeStack);   // each word = 4 bytes
-}
-
-/**
- * Checks if string is valid number
- * @param str String
- * @return boolean
- */
-boolean isValidNumber(String str) {
-  if(str.charAt(1) == '0'){  
-    return false;
-  }
-    
-  for(byte i=1;i<str.length();i++){
-    if(!isDigit(str.charAt(i))){
-      return false;
-    }
-  }
-
-  return true;
+  vTaskDelay(200 / portTICK_PERIOD_MS);
 }
 
 /**
@@ -199,34 +202,21 @@ int getWaterLevelPercent() {
   raw = constrain(raw, 0, 100);
   return raw;
 }
-// void checkWaterLevel()
-// {
-//   printFreeStack("CheckWaterLevel");
-//   int waterLevel = analogRead(CMS_PIN);
-//   vTaskDelay(200 / portTICK_PERIOD_MS);
-//   waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-//   xSemaphoreTake(botMutex, portMAX_DELAY);
-//   bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-//   xSemaphoreGive(botMutex);
-//   if (waterLevel > 80){
-//     xSemaphoreTake(botMutex, portMAX_DELAY);
-//     bot.sendMessage(chat_id, "water level is HIGH, system OK", "");
-//     xSemaphoreGive(botMutex);
-//   }
-//   else if( (waterLevel <= 80) && (waterLevel> 50) ){
-//     xSemaphoreTake(botMutex, portMAX_DELAY);
-//     bot.sendMessage(chat_id, "water level is MEDIUM, please refill water tank", "");
-//     xSemaphoreGive(botMutex);
-//   }
-//   else{
-//     xSemaphoreTake(botMutex, portMAX_DELAY);
-//     bot.sendMessage(chat_id, "water level is too LOW, please refill water tank", "");
-//     xSemaphoreGive(botMutex);
-//     xSemaphoreTake(botMutex, portMAX_DELAY);
-//     bot.sendMessage(chat_id, "irrigation system operation is limited", "");
-//     xSemaphoreGive(botMutex);
-//   }
-// }
+
+/**
+ * Evaluates water level and returns text feedback
+ * @param waterLevel
+ * @return pointer to char array
+ */
+const char* evaluateWaterLevel(int waterLevel)
+{
+  if (waterLevel > 80)
+    return "water level is HIGH, system OK";
+  else if (waterLevel > 50)
+    return "water level is MEDIUM, please refill water tank";
+  else
+    return "water level is too LOW, please refill water tank, irrigation system operation is limited";
+}
 
 /**
  * Sets WiFi modem to power save mode
@@ -277,13 +267,13 @@ void ControlTask(void *pvParameters) {
 
         case CMD_PUMP_ON: {
           enqueueBotMessage("Pump ON for " + String(cmd.value) + " min");
-          xQueueSend(pumpQueue, &cmd.value, 0);
+          xQueueSend(pumpQueue, &cmd.value, portMAX_DELAY);
           break;
         }
 
         case CMD_LAMP_ON: {
           enqueueBotMessage("Lamp ON for " + String(cmd.value) + " hr");
-          xQueueSend(lampQueue, &cmd.value, 0);
+          xQueueSend(lampQueue, &cmd.value, portMAX_DELAY);
           break;
         }
         default:
@@ -346,44 +336,31 @@ void TimeTask(void *pvParameters) {
  */
 void DayLightTask(void *pvParameters) {
   Serial.println("DayLightTask started");
-  pinMode(RELAY_PIN_LAMP, OUTPUT);
+  // pinMode(RELAY_PIN_LAMP, OUTPUT);
   uint32_t durationHr;
 
   while (true) {
     if (xQueueReceive(lampQueue, &durationHr, portMAX_DELAY)) {
 
-      digitalWrite(RELAY_PIN_LAMP, HIGH);
+      digitalWrite(RELAY_PIN_LAMP, LOW);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      Serial.println("LAMP ON");
+      printFreeStack("Day light");
+
       unsigned long offTime = millis() + durationHr * 3600000UL;
 
       while ((long)(millis() - offTime) < 0) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
       }
 
-      digitalWrite(RELAY_PIN_LAMP, LOW);
-      enqueueBotMessage("Day light OFF");
+      digitalWrite(RELAY_PIN_LAMP, HIGH);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      Serial.println("LAMP OFF");
+
+      enqueueBotMessage("Lamp OFF");
     }
   }
 }
-
-// void DayLightTask(void *pvParameters) {
-//   Serial.println("DayLightTask()");
-//   while (true) {
-//     // printFreeStack("DayLightTask");
-//     if (dayLightActive && (long)(millis() - dayLightOffTime) >= 0){
-//       digitalWrite(RELAY_PIN_LAMP, LOW);
-//       vTaskDelay(200 / portTICK_PERIOD_MS);
-//       dayLightActive = false;
-//       Serial.println("Daylight lamp OFF (timer expired)");
-//       Serial.print("Daylight lamp operated for ");
-//       Serial.print((dayLightOffTime-dayLightOnTime));
-//       Serial.println("ms");
-//       xSemaphoreTake(botMutex, portMAX_DELAY);
-//       bot.sendMessage(chat_id, "daylight lamp operated for " + String(dayLightOffTime-dayLightOnTime) + "ms", "");
-//       xSemaphoreGive(botMutex);
-//     }
-//     vTaskDelay(1000 / portTICK_PERIOD_MS);
-//   }
-// }
 
 /**
  * Handles water pump task
@@ -391,52 +368,29 @@ void DayLightTask(void *pvParameters) {
  */
 void WaterPumpTask(void *pvParameters) {
   Serial.println("WaterPumpTask started");
-  pinMode(RELAY_PIN_PUMP, OUTPUT);
   uint32_t durationMin;
 
   while (true) {
     if (xQueueReceive(pumpQueue, &durationMin, portMAX_DELAY)) {
 
-      digitalWrite(RELAY_PIN_PUMP, HIGH);
+      digitalWrite(RELAY_PIN_PUMP, LOW);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      Serial.println("PUMP ON");
+
       unsigned long offTime = millis() + durationMin * 60000UL;
 
       while ((long)(millis() - offTime) < 0) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
       }
 
-      digitalWrite(RELAY_PIN_PUMP, LOW);
-      enqueueBotMessage("Water pump OFF");
+      digitalWrite(RELAY_PIN_PUMP, HIGH);
+      vTaskDelay(200 / portTICK_PERIOD_MS);
+      Serial.println("PUMP OFF");
+
+      enqueueBotMessage("Pump OFF");
     }
   }
 }
-
-// void WaterPumpTask(void *pvParameters){
-//   Serial.println("WaterPumpTask()");
-//   while (true) {
-//     // printFreeStack("WaterPumpTask");
-//     if (waterPumpActive && (long)(millis() - waterPumpOffTime) >= 0){
-//       digitalWrite(RELAY_PIN_PUMP, LOW);
-//       vTaskDelay(200 / portTICK_PERIOD_MS);
-//       waterPumpActive = false;
-//       Serial.println("Water pump OFF (timer expired)");
-//       Serial.print("Water pump operated for ");
-//       Serial.print((waterPumpOffTime-waterPumpOnTime));
-//       Serial.println("ms");
-//       xSemaphoreTake(botMutex, portMAX_DELAY);
-//       bot.sendMessage(chat_id, "water pump operated for " + String(waterPumpOffTime-waterPumpOnTime) + "ms", "");
-//       xSemaphoreGive(botMutex);
-//
-//       int waterLevel = analogRead(CMS_PIN);
-//       vTaskDelay(200 / portTICK_PERIOD_MS);
-//       waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-//       xSemaphoreTake(botMutex, portMAX_DELAY);
-//       bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-//       xSemaphoreGive(botMutex);
-//
-//     }
-//     vTaskDelay(1000 / portTICK_PERIOD_MS);
-//   }
-// }
 
 /**
  * Handles telegram bot messages
@@ -470,7 +424,6 @@ void TelegramTask(void *pvParameters) {
           if (isValidNumber(text)) {
             cmd.type = CMD_LAMP_ON;
             cmd.value = text.substring(1).toInt();
-            // xQueueSend(commandQueue, &cmd, 0);
           } else {
             enqueueBotMessage("Invalid value. Please enter a number > 0");
           }
@@ -483,7 +436,6 @@ void TelegramTask(void *pvParameters) {
           if (isValidNumber(text)) {
             cmd.type = CMD_PUMP_ON;
             cmd.value = text.substring(1).toInt();
-            // xQueueSend(commandQueue, &cmd, 0);
           } else {
             enqueueBotMessage("Invalid value. Please enter a number > 0");
           }
@@ -495,17 +447,13 @@ void TelegramTask(void *pvParameters) {
           cmd.type = CMD_GET_WATER_STATUS;
 
         else if (text.startsWith("/water_pump_on")) {
-          enqueueBotMessage("Please send pump time in minutes (numbers only)");
+          enqueueBotMessage("Please send irrigation duration in minutes");
           pendingState = WAIT_PUMP_MIN;
-          // cmd.type = CMD_PUMP_ON;
-          // cmd.value = 5;  // Or request value later
         }
 
         else if (text.startsWith("/daylight_lamp_on")) {
-          enqueueBotMessage("Please send lamp time in hours (number only)");
+          enqueueBotMessage("Please send daylight duration in hours");
           pendingState = WAIT_LAMP_HOURS;
-          // cmd.type = CMD_LAMP_ON;
-          // cmd.value = 1;
         }
 
         if (cmd.type != CMD_NONE)
@@ -519,121 +467,6 @@ void TelegramTask(void *pvParameters) {
   }
 }
 
-// void TelegramTask(void *pvParameters) {
-//   Serial.println("TelegramTask()");
-//   while (true) {
-//     // printFreeStack("TelegramTask");
-//     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-//
-//     // Serial.println("handleNewMessages");
-//     // Serial.println(String(numNewMessages));
-//
-//     while (numNewMessages) {
-//       for (int i = 0; i < numNewMessages; i++) {
-//
-//         // Chat id of the requester
-//         chat_id = String(bot.messages[i].chat_id);
-//         // Serial.print("CHAT_ID: ");
-//         // Serial.println(chat_id);
-//
-//         if (chat_id != CHAT_ID){
-//           xSemaphoreTake(botMutex, portMAX_DELAY);
-//           bot.sendMessage(chat_id, "Unauthorized user", "");
-//           xSemaphoreGive(botMutex);
-//           continue;
-//         }
-//
-//         // Print the received message
-//         String text = bot.messages[i].text;
-//         Serial.println(text);
-//
-//         if (text.startsWith("/water_status")) {
-//           checkWaterLevel();
-//         }
-//
-//         if (text.startsWith("/daylight_lamp_on")) {
-//           xSemaphoreTake(botMutex, portMAX_DELAY);
-//           bot.sendMessage(chat_id, "please enter daylight lamp operation time in hours: ", "");
-//           xSemaphoreGive(botMutex);
-//           actualState = DAYLIGHTLAMPON;
-//         }
-//
-//         if (text.startsWith("/water_pump_on")) {
-//           xSemaphoreTake(botMutex, portMAX_DELAY);
-//           bot.sendMessage(chat_id, "please enter pump operation time in minutes: ", "");
-//           xSemaphoreGive(botMutex);
-//           actualState = WATERPUMPON;
-//         }
-//
-//         if (isValidNumber(text)) {
-//
-//           int duration = text.substring(1).toInt();
-//
-//           if (actualState == WATERPUMPON){
-//
-//             int waterLevel = analogRead(CMS_PIN);
-//             vTaskDelay(200 / portTICK_PERIOD_MS);
-//             waterLevel = map(waterLevel, CMS_AIR, CMS_WATER, 0, 100);
-//             xSemaphoreTake(botMutex, portMAX_DELAY);
-//             bot.sendMessage(chat_id, "water level is " + String(waterLevel) + "% ", "");
-//             xSemaphoreGive(botMutex);
-//
-//             digitalWrite(RELAY_PIN_PUMP, HIGH);
-//             vTaskDelay(200 / portTICK_PERIOD_MS);
-//             Serial.println("Water pump ON");
-//             waterPumpActive = true;
-//             waterPumpOffTime = millis() + (unsigned long)duration * 60000UL;
-//             waterPumpOnTime = millis();
-//             xSemaphoreTake(botMutex, portMAX_DELAY);
-//             bot.sendMessage(chat_id, "water pump ON for " + String(duration) + " minutes", "");
-//             xSemaphoreGive(botMutex);
-//
-//             actualState = NOACTION;
-//
-//           }
-//
-//           else if (actualState == DAYLIGHTLAMPON){
-//
-//             digitalWrite(RELAY_PIN_LAMP, HIGH);
-//             vTaskDelay(200 / portTICK_PERIOD_MS);
-//             Serial.println("Daylight lamp ON");
-//             dayLightActive = true;
-//             dayLightOffTime = millis() + (unsigned long)duration * 3600000UL;
-//             dayLightOnTime = millis();
-//             xSemaphoreTake(botMutex, portMAX_DELAY);
-//             bot.sendMessage(chat_id, "daylight lamp ON for " + String(duration) + " hours", "");
-//             xSemaphoreGive(botMutex);
-//
-//             actualState = NOACTION;
-//           }
-//
-//           else {
-//             actualState = NOACTION;
-//           }
-//
-//         }
-//
-//         if (text.startsWith("/start"))
-//         {
-//           String from_name = bot.messages[i].from_name;
-//           String html_msg = "Welcome to <strong>Smart Indoor Garden</strong>, " + from_name + ".\n";
-//           html_msg += "I'm dog bot and I will help you with this garden.\n\n";
-//           html_msg += "<a href='/water_status'>/water_status</a> -> <em>returns water tank state in percentage</em>\n";
-//           html_msg += "<a href='/water_pump_on'>/water_pump_on</a> -> <em>set water pump ON</em>\n";
-//           html_msg += "<a href='/daylight_lamp_on'>/daylight_lamp_on</a> -> <em>set daylight lamp ON</em>\n";
-//           xSemaphoreTake(botMutex, portMAX_DELAY);
-//           bot.sendMessage(chat_id, html_msg, "HTML");
-//           xSemaphoreGive(botMutex);
-//         }
-//       }
-//
-//       numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-//     }
-//
-//     vTaskDelay(10000 / portTICK_PERIOD_MS);
-//   }
-// }
-
 /**
  * init setup
  */
@@ -644,7 +477,6 @@ void setup() {
   Serial.println("");
 
   Serial.println("starting at default frequency...");
-  // Set CPU to 80 MHz for power saving
   setCpuFrequencyMhz(80);
   Serial.println("CPU frequency set to 80 MHz.");
   Serial.print("current CPU freq: ");
@@ -674,16 +506,19 @@ void setup() {
   // print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
 
-  bot.sendMessage(CHAT_ID, "bot started", "");
-
   // init HW components
   initComponents();
 
+  // init queues
   botQueue = xQueueCreate(10, sizeof(BotMsg));
   commandQueue = xQueueCreate(10, sizeof(CommandMessage));
   pumpQueue = xQueueCreate(5, sizeof(uint32_t));
   lampQueue = xQueueCreate(5, sizeof(uint32_t));
 
+  // notify telegram bot ready to operate
+  bot.sendMessage(CHAT_ID, "bot started", "");
+
+  // init tasks
   xTaskCreatePinnedToCore(WiFiTask, "WiFiTask", 2048, NULL, 3, &WiFiTaskHandle, 0);
   xTaskCreatePinnedToCore(ControlTask, "ControlTask", 2048, NULL, 2, &ControlTaskHandle, 1);
   xTaskCreatePinnedToCore(TimeTask, "TimeTask", 2048, NULL, 1, &TimeTaskHandle, 1);
@@ -693,6 +528,7 @@ void setup() {
 
   Serial.println("system READY...");
   Serial.println("");
+
 }
 
 /**
